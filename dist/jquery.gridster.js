@@ -1817,7 +1817,6 @@
         return this;
     };
 
-
     /**
      * Move down widgets in cells represented by the arguments col, row, size_x,
      * size_y
@@ -1858,6 +1857,24 @@
 
         return this;
     };
+
+    fn.reverse_gravity = function ($w) {
+        var wgd = $w.coords().grid;
+        var row = wgd.row;
+        this.for_each_column_occupied(wgd, function (col) {
+            if (!this.gridmap[col]) {
+                return this;
+            }
+            if (this.gridmap[col][row-1] === undefined) {
+                return this;
+            }
+            if (this.gridmap[col][row-1] !== false){
+                return this;
+            }
+            this.move_widget_up($w, 1);
+            return this;
+        });
+    }
 
 
     /**
@@ -2141,7 +2158,6 @@
         return this;
     };
 
-
     /**
      * Update the width and height for a widgets coordinate data.
      *
@@ -2282,6 +2298,7 @@
                 delay($.proxy(function () {
                     this.on_stop_resize(event, ui);
                 }, this), 120);
+
             }, this),
             drag: throttle($.proxy(this.on_resize, this), 60)
         });
@@ -2492,7 +2509,7 @@
         var col = this.placeholder_grid_data.col;
         var row = this.placeholder_grid_data.row;
 
-        this.set_cells_player_occupies(col, row);
+        this.new_move_widget_to(this.$player, col, row);
 
         if( this.grfix_queue != []){
 
@@ -2549,6 +2566,14 @@
         this.$resized_widget = ui.$player.closest('.gs-w');
         this.resize_coords = this.$resized_widget.coords();
         this.resize_wgd = this.resize_coords.grid;
+
+        this.initial_widget_first_row = this.resize_coords.grid.row;
+        this.initial_widget_right_col = this.resize_coords.grid.col + this.resize_coords.grid.size_x;
+        this.initial_widget_last_row =  this.resize_coords.grid.row +  this.resize_coords.grid.size_y;
+        this.gridmap_before_resize = this.gridmap.map(function (col) {
+            return col.slice();
+        });
+
         this.resize_initial_width = this.resize_coords.coords.width;
         this.resize_initial_height = this.resize_coords.coords.height;
         this.resize_initial_sizex = this.resize_coords.grid.size_x;
@@ -2609,7 +2634,58 @@
      * @param {Object} ui A prepared ui object with useful drag-related data
      */
     fn.on_stop_resize = function (event, ui) {
-        this.$resized_widget
+        this.placeholder_grid_data = this.$resized_widget.coords().grid
+        this.cells_occupied_by_placeholder = this.get_cells_occupied(this.placeholder_grid_data);
+
+        var $overlapped_widgets = this.get_widgets_overlapped_on_resize(this.$resized_widget);
+
+        //before & after measures of resized widget
+        var resized_t1_first_row = this.initial_widget_first_row;
+        var resized_t1_last_row = this.initial_widget_last_row;
+        var resized_t1_right_col = this.initial_widget_right_col;
+
+        var occupied_rows = this.cells_occupied_by_placeholder.rows;
+        var resized_t2_last_row = occupied_rows[occupied_rows.length-1] + 1;
+        var resized_t2_size_y = resized_t2_last_row - resized_t1_first_row;
+
+        //change in size_y due to resizing itself
+        var resized_y_gap = resized_t2_last_row - resized_t1_last_row;
+
+        var initial_gap_bottom = this.options.max_rows;
+        var initial_gap_right = this.options.max_rows;
+
+        //determine smallest row gap between resized and overlapped widgets (2 cases)
+        $overlapped_widgets.each(function (i, widget) {
+            var $widget = $(widget);
+            var wgd = $widget.coords().grid;
+            var left_overlap = resized_t1_right_col >= wgd.col + wgd.size_x;
+
+            if (left_overlap &&  initial_gap_bottom > wgd.row  - resized_t1_last_row)  {
+                initial_gap_bottom =  wgd.row  - resized_t1_last_row;
+
+            } else if (!left_overlap && initial_gap_right > wgd.row - resized_t1_first_row) {
+                initial_gap_right = wgd.row - resized_t1_first_row;
+            }
+        });
+
+        var self = this;
+        $overlapped_widgets.each(function (i, widget) {
+            var $widget = $(widget);
+            var wgd = $widget.coords().grid;
+
+            //case 1, left widgets
+            var left_overlap = resized_t1_right_col >= wgd.col + wgd.size_x;
+            if (left_overlap) {
+                var y_gap =  resized_y_gap - initial_gap_bottom;
+                self.move_widget_down($widget, y_gap);
+                //case 2, right widgets
+            } else {
+                var y_gap =  resized_t2_size_y - initial_gap_right;
+                self.move_widget_down($widget, y_gap);
+            }
+        });
+
+        self.$resized_widget
             .removeClass('resizing')
             .css({
                 'width': '',
@@ -2618,28 +2694,28 @@
                 'min-height': ''
             });
 
-        delay($.proxy(function () {
-            this.$resize_preview_holder
-                .remove()
-                .css({
-                    'min-width': '',
-                    'min-height': ''
-                });
+        self.$resize_preview_holder
+            .remove()
+            .css({
+                'min-width': '',
+                'min-height': ''
+            });
 
-            if (this.options.resize.stop) {
-                this.options.resize.stop.call(this, event, ui, this.$resized_widget);
-            }
+        if (self.options.resize.stop) {
+            self.options.resize.stop.call(self, event, ui, self.$resized_widget);
+        }
 
-            this.$el.trigger('gridster:resizestop');
-        }, this), 300);
+        self.$el.trigger('gridster:resizestop');
 
-        this.set_dom_grid_width();
-        this.set_dom_grid_height();
+        self.update_widget_position(self.$resized_widget.coords().grid, self.$resized_widget);
+        self.set_dom_grid_width();
+        self.set_dom_grid_height();
 
-        if (this.options.max_cols === Infinity) {
-            this.drag_api.set_limits(this.cols * this.min_widget_width);
+        if (self.options.max_cols === Infinity) {
+            self.drag_api.set_limits(self.cols * self.min_widget_width);
         }
     };
+
 
 
     /**
@@ -3178,7 +3254,7 @@
             if (can_go_widget_up) {
                 //target CAN go up
                 //so move widget up
-                this.move_widget_to($w, can_go_widget_up);
+                this.move_widget_up($w, can_go_widget_up);
                 this.set_placeholder(to_col, can_go_widget_up + wgd.size_y);
 
             } else {
@@ -3505,7 +3581,7 @@
                     var can_go_widget_up = this.can_go_widget_up(wgd);
 
                     if (can_go_widget_up) {
-                        this.move_widget_to($w, can_go_widget_up);
+                        this.move_widget_up($w, can_go_widget_up);
                     }
 
                 }, this));
@@ -3746,6 +3822,37 @@
         return $widgets;
     };
 
+    /**
+     * Get widgets overlapping with the player on resize
+     *
+     * @method get_widgets_overlapped_on_resize
+     * @return {jQuery} Returns a jQuery collection of HTMLElements.
+     */
+    fn.get_widgets_overlapped_on_resize = function () {
+        this.placeholder_grid_data = this.$resized_widget.coords().grid;
+        this.cells_occupied_by_placeholder = this.get_cells_occupied(this.placeholder_grid_data);
+
+        var $widgets = $([]);
+        var used = [];
+        var rows_from_bottom = this.cells_occupied_by_placeholder.rows.slice(0);
+        rows_from_bottom.reverse();
+
+        $.each(this.cells_occupied_by_placeholder.cols, $.proxy(function (i, col) {
+            $.each(rows_from_bottom, $.proxy(function (i, row) {
+                if (!this.gridmap_before_resize[col]) {
+                    return true;
+                }
+                var w = this.gridmap_before_resize[col][row];
+                if (this.is_occupied(col, row) && !this.is_player(w) &&
+                    $.inArray(w, used) === -1) {
+                    $widgets = $widgets.add(w);
+                    used.push(w);
+                }
+            }, this));
+        }, this));
+        return $widgets.not(this.$resized_widget);
+    };
+
 
     /**
      * This callback is executed when the player begins to collide with a column.
@@ -3814,6 +3921,13 @@
 
     //Not yet part of api - DM.
     fn.new_move_widget_to = function ($widget, col, row) {
+        if (col === 0 && row ===0) {
+            return false;
+        }
+        if (!$widget) {
+            return false;
+        }
+
         var widget_grid_data = $widget.coords().grid;
 
         this.remove_from_gridmap(widget_grid_data);
@@ -3829,9 +3943,6 @@
         grfix_object.gridmap = widget_grid_data;
         grfix_object.widget = $widget;
         this.grfix_queue.push(grfix_object);
-
-
-        this.$changed = this.$changed.add($widget);
 
         return this;
     };
@@ -3951,6 +4062,12 @@
                 this.remove_from_gridmap(widget_grid_data);
                 widget_grid_data.row = next_row;
                 this.update_widget_position(widget_grid_data, $widget);
+
+                var grfix_object = {};
+                grfix_object.gridmap = widget_grid_data;
+                grfix_object.widget = $widget;
+                this.grfix_queue.push(grfix_object);
+
                 $widget.attr('data-row', widget_grid_data.row);
                 this.$changed = this.$changed.add($widget);
 
@@ -3976,33 +4093,27 @@
      * @return {Gridster} Returns the instance of the Gridster Class.
      */
     fn.move_widget_down = function ($widget, y_units) {
-        var el_grid_data, actual_row, moved, y_diff;
-
+        //prevent resized widget as perceived as one of the widgets below when it's overlapped
+        if ($widget.hasClass('resizing')) return;
+        if (!$widget) {
+            return false;
+        }
         if (y_units <= 0) {
             return false;
         }
 
+        var el_grid_data, actual_row, moved, y_diff;
         el_grid_data = $widget.coords().grid;
         actual_row = el_grid_data.row;
-        if (actual_row + ($widget.coords().grid.size_y - 1) + y_units > this.options.max_rows)
-        {
-            return false;
-        }
+
         moved = [];
         y_diff = y_units;
 
-        if (!$widget) {
-            return false;
-        }
-
         this.failed = false;
         if ($.inArray($widget, moved) === -1) {
-
             var widget_grid_data = $widget.coords().grid;
             var next_row = actual_row + y_units;
             var $next_widgets = this.widgets_below($widget);
-
-            //this.remove_from_gridmap(widget_grid_data);
 
             $next_widgets.each($.proxy(function (i, widget) {
                 if (this.failed !== true) {
@@ -4012,7 +4123,11 @@
                         wd, widget_grid_data, y_diff);
 
                     if (tmp_y > 0) {
+
                         this.failed = this.move_widget_down($w, tmp_y) === false;
+                        if ($widget.hasClass('resizing') || $widget.hasClass('player')) {
+                            this.failed = false;
+                        }
                     }
                 }
             }, this));
