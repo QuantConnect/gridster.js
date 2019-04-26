@@ -1146,10 +1146,13 @@
      * each widget) in ascending way.
      *
      * @method sort_by_row_asc
-     * @param {Array} widgets Array of grid coords objects
+     * @param {Array} widgets Array of grid coords objects ($ wrapped widget_grid_data array)
      * @return {Array} Returns the array sorted.
      */
     Gridster.sort_by_row_asc = function (widgets) {
+        if (widgets === $([])) {
+            return widgets;
+        }
         widgets = widgets.sort(function (a, b) {
             if (!a.row) {
                 a = $(a).coords().grid;
